@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Mii Editor</title>
+<script src="https://unpkg.com/@ruffle-rs/ruffle"></script>
+<style>
+:root {
+    --wii-blue: #00a2ff;
+    --wii-gray: #ebebeb;
+}
+
+body, html {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background-color: #ffffff;
+    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+    user-select: none;
+}
+
+#app-container {
+    position: relative;
+    width: 100vw;
+    height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    background: radial-gradient(circle at center, #ffffff 0%, #e0e0e0 100%);
+}
+
+#ruffle-player-container {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+#ruffle-player-container ruffle-player {
+    max-width: 1280px;
+    max-height: 720px;
+}
+
+#ui-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 100;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    background: white;
+    transition: opacity 0.8s ease, visibility 0.8s ease;
+}
+
+.hidden {
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+}
+
+#start-screen {
+    cursor: pointer;
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+.wii-button {
+    background: white;
+    border: 2px solid #ccc;
+    border-radius: 50px;
+    padding: 20px 60px;
+    font-size: 24px;
+    color: #666;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+    transition: all 0.2s;
+    margin: 10px;
+}
+
+.wii-button:hover {
+    transform: scale(1.05);
+    border-color: var(--wii-blue);
+    color: var(--wii-blue);
+}
+
+.wii-button:active {
+    transform: scale(0.95);
+}
+
+#loading-indicator {
+    margin-top: 20px;
+    display: none;
+    flex-direction: column;
+    align-items: center;
+}
+
+.spinner {
+    width: 40px;
+    height: 40px;
+    border: 4px solid #f3f3f3;
+    border-top: 4px solid var(--wii-blue);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+
+#instruction {
+    position: absolute;
+    bottom: 10%;
+    color: #999;
+    font-size: 14px;
+    letter-spacing: 1px;
+}
+</style>
+</head>
+<body>
+<div id="app-container">
+    <div id="ruffle-player-container"></div>
+    <div id="ui-overlay">
+        <div id="start-screen">
+            <div class="wii-button" id="start-btn">Start Mii Editor</div>
+            <div id="loading-indicator">
+                <div class="spinner"></div>
+                <p style="margin-top:10px; color:#666;">Reading Data...</p>
+            </div>
+            <div id="instruction">Click to play sound and begin</div>
+        </div>
+    </div>
+</div>
+
+<script type="module">
+window.RufflePlayer = window.RufflePlayer || {};
+
+let audioCtx;
+let audioBuffers = {};
+let currentSWF;
+
+const SWFS = {
+    editor1: 'classicGUI.swf',
+    editor2: 'advancedGUI.swf'
+};
+
+const MP3S = {
+    bg1: 'mii_bg_music.mp3',
+    bg2: 'mii_bg_music2.mp3',
+    click: 'click_sound.mp3'
+};
+
+async function initAudio() {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const fetches = Object.entries(MP3S).map(async ([key, url]) => {
+        const res = await fetch(url);
+        const data = await res.arrayBuffer();
+        audioBuffers[key] = await audioCtx.decodeAudioData(data);
+    });
+    await Promise.all(fetches);
+}
+
+function playSound(buffer, loop = false) {
+    if (!audioCtx || !buffer) return;
+    const source = audioCtx.createBufferSource();
+    source.buffer = buffer;
+    source.loop = loop;
+    source.connect(audioCtx.destination);
+    source.start();
+    return source;
+}
+
+async function loadSWF(name) {
+    const ruffle = window.RufflePlayer.newest();
+    const container = document.getElementById("ruffle-player-container");
+    container.innerHTML = ''; // remove old SWF
+    const player = ruffle.createPlayer();
+    container.appendChild(player);
+    currentSWF = name;
+    await player.load(SWFS[name]); // load SWF by URL
+}
+
+const startBtn = document.getElementById('start-btn');
+const loadingIndicator = document.getElementById('loading-indicator');
+const uiOverlay = document.getElementById('ui-overlay');
+
+startBtn.addEventListener('click', async () => {
+    startBtn.style.display = 'none';
+    loadingIndicator.style.display = 'flex';
+
+    try {
+        await initAudio();
+        await audioCtx.resume();
+
+        // Play click then background music
+        playSound(audioBuffers.click);
+        playSound(audioBuffers.bg1, true);
+
+        // Load first SWF
+        await loadSWF('editor1');
+
+        // Fade out overlay
+        uiOverlay.classList.add('hidden');
+
+        // Interaction feedback for clicks
+        document.body.addEventListener('mousedown', () => {
+            playSound(audioBuffers.click);
+        });
+
+    } catch (err) {
+        console.error("Initialization failed:", err);
+        alert("Error loading editor data. Please check connection.");
+        startBtn.style.display = 'block';
+        loadingIndicator.style.display = 'none';
+    }
+});
+
+// Function to switch editors dynamically
+window.switchEditor = async function(editorName, bgMusicKey) {
+    if (!audioBuffers[bgMusicKey]) return;
+    playSound(audioBuffers.click);
+    await loadSWF(editorName);
+    playSound(audioBuffers[bgMusicKey], true);
+};
+</script>
+</body>
+</html>
